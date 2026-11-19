@@ -6,10 +6,18 @@ from unittest.mock import patch
 
 import pytest
 
-from .service import LicenseCreationError
+from .exceptions import DeviceLimitReachedError
+from .exceptions import InvalidActivationRequestError
+from .exceptions import InvalidLicenseError
+from .exceptions import LicenseCreationError
+from .exceptions import LicenseServiceException
 from .service import LicenseService
+from licmgr.storage import ActivationResult
 from licmgr.storage import DbError
 from licmgr.storage import LicenseRepo
+
+LICENSE_KEY = "A0AA-BBBB-CCCC-DDDD"
+DEVICE_ID = "a1" * 32
 
 
 @pytest.fixture
@@ -89,3 +97,80 @@ def test_create_license_propagates_database_errors(
 
     assert exc.value is error
     repo.add.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("license_key", "device_id"),
+    [
+        (LICENSE_KEY.lower(), DEVICE_ID),
+        ("AAAA-BBBB-CCCC", DEVICE_ID),
+        (LICENSE_KEY.replace("-", ""), DEVICE_ID),
+        (LICENSE_KEY + "\n", DEVICE_ID),
+        (LICENSE_KEY, DEVICE_ID[:-1]),
+        (LICENSE_KEY, DEVICE_ID + "0"),
+        (LICENSE_KEY, DEVICE_ID.upper()),
+        (LICENSE_KEY, "g" + DEVICE_ID[1:]),
+        (LICENSE_KEY, DEVICE_ID + "\n"),
+    ],
+)
+def test_activate_rejects_invalid_fields_before_storage(
+    service: LicenseService,
+    repo: Mock,
+    license_key: str,
+    device_id: str,
+) -> None:
+    with pytest.raises(InvalidActivationRequestError):
+        service.activate(license_key=license_key, device_id=device_id)
+
+    repo.activate.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("result", "status"),
+    [
+        (ActivationResult.ACTIVATED, "activated"),
+        (ActivationResult.ALREADY_ACTIVATED, "already_activated"),
+    ],
+)
+def test_activate_returns_success_status(
+    service: LicenseService,
+    repo: Mock,
+    result: ActivationResult,
+    status: str,
+) -> None:
+    repo.activate.return_value = result
+
+    assert service.activate(license_key=LICENSE_KEY, device_id=DEVICE_ID) == status
+    repo.activate.assert_called_once_with(LICENSE_KEY, DEVICE_ID)
+
+
+@pytest.mark.parametrize(
+    ("result", "error"),
+    [
+        (ActivationResult.INVALID_LICENSE, InvalidLicenseError),
+        (ActivationResult.DEVICE_LIMIT_REACHED, DeviceLimitReachedError),
+    ],
+)
+def test_activate_maps_storage_rejections_to_service_errors(
+    service: LicenseService,
+    repo: Mock,
+    result: ActivationResult,
+    error: type[LicenseServiceException],
+) -> None:
+    repo.activate.return_value = result
+
+    with pytest.raises(error):
+        service.activate(license_key=LICENSE_KEY, device_id=DEVICE_ID)
+
+
+def test_activate_propagates_database_errors(
+    service: LicenseService,
+    repo: Mock,
+) -> None:
+    error = DbError("Database operation failed")
+    repo.activate.side_effect = error
+
+    with pytest.raises(DbError) as exc:
+        service.activate(license_key=LICENSE_KEY, device_id=DEVICE_ID)
+
+    assert exc.value is error
