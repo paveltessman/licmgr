@@ -17,7 +17,7 @@ class License(Base):
     max_devices: Mapped[int]
 
 
-class LicenseRepository:
+class LicenseRepo:
     def __init__(self, database: Db) -> None:
         self._database = database
 

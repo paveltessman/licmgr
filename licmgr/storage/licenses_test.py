@@ -8,7 +8,7 @@ from sqlalchemy.exc import OperationalError
 
 from . import Db
 from . import DbError
-from . import LicenseRepository
+from . import LicenseRepo
 from .licenses import License
 
 
@@ -28,14 +28,14 @@ def database(database_url: URL) -> Iterator[Db]:
 
 
 @pytest.fixture
-def repo(database: Db) -> LicenseRepository:
-    return LicenseRepository(database)
+def repo(database: Db) -> LicenseRepo:
+    return LicenseRepo(database)
 
 
 def test_license_survives_reopening(database: Db, database_url: URL) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
 
-    added = LicenseRepository(database).add(key, max_devices=3)
+    added = LicenseRepo(database).add(key, max_devices=3)
     assert added
 
     with database.transaction() as session:
@@ -64,7 +64,7 @@ def test_license_survives_reopening(database: Db, database_url: URL) -> None:
 def test_duplicate_key_preserves_existing_license(database: Db) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
 
-    repository = LicenseRepository(database)
+    repository = LicenseRepo(database)
 
     added = repository.add(key, max_devices=3)
     assert added
