@@ -1,6 +1,7 @@
 **
 !requirements.txt
 !pyproject.toml
+!logging.json
 !licmgr/
 !licmgr/**
 **/__pycache__

@@ -18,10 +18,9 @@ from licmgr.services.license.service import LicenseService
 from licmgr.storage import Db
 
 
-@pytest.mark.usefixtures("server_private_key")
-async def test_lifespan_provides_services(tmp_path: Path) -> None:
-    db_path = tmp_path / "licenses.sqlite3"
-    app = create_app(db_path)
+@pytest.mark.usefixtures("server_private_key", "database_url")
+async def test_lifespan_provides_services() -> None:
+    app = create_app()
 
     @app.get("/test")
     def endpoint(
@@ -42,17 +41,19 @@ async def test_lifespan_provides_services(tmp_path: Path) -> None:
             assert response.status_code == 200
             assert response.json() == {"data": 3, "error": None}
 
-    assert db_path.is_file()
     assert not hasattr(app.state, "crypto_service")
 
 
 @pytest.mark.usefixtures("server_private_key")
 @pytest.mark.parametrize("startup_fails", [False, True])
-async def test_lifespan_closes_database(tmp_path: Path, startup_fails: bool) -> None:
-    app = create_app(tmp_path / "licenses.sqlite3")
+async def test_lifespan_closes_database(
+    monkeypatch: pytest.MonkeyPatch, startup_fails: bool
+) -> None:
+    app = create_app()
     database = create_autospec(Db, instance=True, spec_set=True)
 
-    with patch.object(Db, "from_sqlite_path", return_value=database):
+    monkeypatch.setenv("LICMGR_DATABASE_URL", "postgresql://localhost/licmgr")
+    with patch("licmgr.storage.db.Db", return_value=database):
         if startup_fails:
             database.initialize.side_effect = RuntimeError("startup failed")
             with pytest.raises(RuntimeError, match="startup failed"):
@@ -76,19 +77,16 @@ async def test_lifespan_requires_valid_private_key(
         monkeypatch.delenv("LICMGR_SERVER_PRIVATE_KEY", raising=False)
     else:
         monkeypatch.setenv("LICMGR_SERVER_PRIVATE_KEY", key)
-    db_path = tmp_path / "licenses.sqlite3"
-    app = create_app(db_path)
+    app = create_app()
 
     with pytest.raises(ValidationError, match="LICMGR_SERVER_PRIVATE_KEY"):
         async with app.router.lifespan_context(app):
             pytest.fail("App started without a valid private key")
 
-    assert not db_path.exists()
 
-
-@pytest.mark.usefixtures("server_private_key")
-async def test_framework_errors_use_shared_response(tmp_path: Path) -> None:
-    app = create_app(tmp_path / "licenses.sqlite3")
+@pytest.mark.usefixtures("server_private_key", "database_url")
+async def test_framework_errors_use_shared_response() -> None:
+    app = create_app()
 
     @app.get("/test")
     def endpoint(count: int) -> None:

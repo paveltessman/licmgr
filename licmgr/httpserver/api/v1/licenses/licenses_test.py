@@ -3,10 +3,10 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.hpke import AEAD
 from cryptography.hazmat.primitives.hpke import KDF
@@ -14,12 +14,12 @@ from cryptography.hazmat.primitives.hpke import KEM
 from cryptography.hazmat.primitives.hpke import Suite
 from httpx import ASGITransport
 from httpx import AsyncClient
+from sqlalchemy.engine import URL
 
 from .licenses import activation_logger
+from licmgr.cli import cli
 from licmgr.httpserver.server import create_app
 from licmgr.services.license import LicenseService
-from licmgr.storage import LicenseRepo
-from licmgr.storage import open_database
 
 ACTIVATION_PATH = "/api/v1/licenses/activate/"
 DEVICE_ID = "a" * 64
@@ -43,14 +43,14 @@ def encrypt(server_private_key: X25519PrivateKey) -> Encrypt:
 
 @pytest.fixture
 async def activation_client(
-    tmp_path: Path,
+    database_url: URL,
     server_private_key: X25519PrivateKey,
 ) -> AsyncGenerator[tuple[AsyncClient, str]]:
-    db_path = tmp_path / "licenses.sqlite3"
-    with open_database(db_path) as database:
-        key = LicenseService(LicenseRepo(database)).create_license(max_devices=1)
+    result = CliRunner().invoke(cli, ["keys", "create"])
+    assert result.exit_code == 0, result.output
+    key = result.stdout.strip()
 
-    app = create_app(db_path)
+    app = create_app()
     async with app.router.lifespan_context(app):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

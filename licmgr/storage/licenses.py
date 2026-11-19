@@ -3,11 +3,12 @@ from enum import StrEnum
 from uuid import UUID
 from uuid import uuid4
 
+from sqlalchemy import DateTime
 from sqlalchemy import ForeignKey
 from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy import UniqueConstraint
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
 
@@ -31,7 +32,7 @@ class Activation(Base):
     license_id: Mapped[UUID] = mapped_column(ForeignKey("licenses.id"))
     device_id: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(
-        server_default=func.current_timestamp()
+        DateTime(timezone=True), server_default=func.current_timestamp()
     )
 
 
@@ -59,12 +60,14 @@ class LicenseRepo:
             .returning(License.id)
         )
 
-        with self._database.transaction(immediate=False) as session:
+        with self._database.transaction() as session:
             return session.scalar(statement) is not None
 
     def activate(self, license_key: str, device_id: str) -> ActivationResult:
-        with self._database.transaction(immediate=True) as session:
-            license = session.scalar(select(License).where(License.key == license_key))
+        with self._database.transaction() as session:
+            license = session.scalar(
+                select(License).where(License.key == license_key).with_for_update()
+            )
             if license is None:
                 return ActivationResult.INVALID_LICENSE
 

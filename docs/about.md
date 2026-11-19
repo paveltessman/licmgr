@@ -2,7 +2,7 @@
 
 This test assignment is a client–server licensing system. The server issues license keys with a configurable device limit and validates activation requests. The client requests activation and displays the result.
 
-Server: fastAPI + sqlite.
+Server: FastAPI + PostgreSQL.
 Client: Linux Python script.
 
 ## Licensing flow

@@ -3,10 +3,25 @@ services:
     build: .
     environment:
       LICMGR_SERVER_PRIVATE_KEY: "${LICMGR_SERVER_PRIVATE_KEY:?Set LICMGR_SERVER_PRIVATE_KEY in .env or export it}"
+      LICMGR_DATABASE_URL: postgresql+psycopg://licmgr@postgres
+      PGPASSWORD: "${LICMGR_DB_PASSWORD:?Set LICMGR_DB_PASSWORD in .env or export it}"
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: licmgr
+      POSTGRES_PASSWORD: "${LICMGR_DB_PASSWORD:?Set LICMGR_DB_PASSWORD in .env or export it}"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "licmgr", "-d", "licmgr"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     volumes:
-      - license-data:/data
+      - postgres-data:/var/lib/postgresql
 
 volumes:
-  license-data:
+  postgres-data:
