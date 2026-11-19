@@ -1,5 +1,6 @@
 from .db import Db
 from .db import DEFAULT_DB_PATH
+from .db import open_database
 from .exceptions import DbError
 from .exceptions import DbIntegrityError
 from .licenses import ActivationResult
@@ -12,4 +13,5 @@ __all__ = [
     "DbError",
     "DbIntegrityError",
     "LicenseRepo",
+    "open_database",
 ]
