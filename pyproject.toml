@@ -3,6 +3,9 @@ name = "licmgr"
 version = "0.0.0"
 description = "opa"
 
+[project.scripts]
+licmgr = "licmgr.cli:cli"
+
 [tool.pyright]
 include = ["licmgr"]
 typeCheckingMode = "strict"
