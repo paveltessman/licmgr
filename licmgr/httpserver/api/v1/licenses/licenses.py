@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 from typing import Literal
 
@@ -15,6 +16,7 @@ from licmgr.services.crypto import CryptoService
 from licmgr.services.license import LicenseService
 
 router = APIRouter(prefix="", tags=["licenses"])
+activation_logger = logging.getLogger("uvicorn.error.licmgr.activation")
 ACTIVATION_INFO = b"license-activation-v1"
 
 
@@ -43,4 +45,6 @@ def activate(
         device_id=activation.device_id,
     )
 
-    return SuccessResponse(data=ActivationResult(status=status))
+    response = SuccessResponse(data=ActivationResult(status=status))
+    activation_logger.info("Activation outcome=%s", response.data.status)
+    return response

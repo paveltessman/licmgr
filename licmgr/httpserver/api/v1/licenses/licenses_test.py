@@ -1,8 +1,10 @@
 import base64
 import json
+import logging
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
@@ -13,6 +15,7 @@ from cryptography.hazmat.primitives.hpke import Suite
 from httpx import ASGITransport
 from httpx import AsyncClient
 
+from .licenses import activation_logger
 from licmgr.httpserver.server import create_app
 from licmgr.services.license import LicenseService
 from licmgr.storage import LicenseRepo
@@ -40,7 +43,8 @@ def encrypt(server_private_key: X25519PrivateKey) -> Encrypt:
 
 @pytest.fixture
 async def activation_client(
-    tmp_path: Path, server_private_key: X25519PrivateKey
+    tmp_path: Path,
+    server_private_key: X25519PrivateKey,
 ) -> AsyncGenerator[tuple[AsyncClient, str]]:
     db_path = tmp_path / "licenses.sqlite3"
     with open_database(db_path) as database:
@@ -57,7 +61,9 @@ async def activation_client(
 async def test_activate_at_device_limit(
     activation_client: tuple[AsyncClient, str],
     encrypt: Encrypt,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger=activation_logger.name)
     client, key = activation_client
     body = {"license_key": key, "device_id": DEVICE_ID}
 
@@ -88,6 +94,34 @@ async def test_activate_at_device_limit(
             "message": "License device limit reached",
         },
     }
+    assert caplog.messages == [
+        "Activation outcome=activated",
+        "Activation outcome=already_activated",
+        "Activation outcome=error status=409 detail=License device limit reached",
+    ]
+
+
+async def test_activation_errors_omit_request_and_exception_details(
+    activation_client: tuple[AsyncClient, str],
+    encrypt: Encrypt,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger=activation_logger.name)
+    client, key = activation_client
+    response = await client.post(ACTIVATION_PATH, json={"ciphertext": key})
+    assert response.status_code == 422
+
+    body = json.dumps({"license_key": key, "device_id": DEVICE_ID}).encode()
+    with patch.object(LicenseService, "activate", side_effect=RuntimeError(key)):
+        response = await client.post(ACTIVATION_PATH, json=encrypt(body))
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "internal_error"
+    assert caplog.messages == [
+        "Activation outcome=error status=422 detail=Invalid activation request",
+        "Activation outcome=error status=500 detail=Internal server error "
+        "exception_type=RuntimeError",
+    ]
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 async def test_activate_rejects_unissued_key(
