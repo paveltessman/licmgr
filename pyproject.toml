@@ -7,13 +7,13 @@ description = "opa"
 licmgr = "licmgr.cli:cli"
 
 [tool.pyright]
-include = ["licmgr"]
+include = ["licmgr", "client"]
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-testpaths = ["licmgr"]
+testpaths = ["licmgr", "client"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
