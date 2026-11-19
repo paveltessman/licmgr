@@ -1,24 +1,12 @@
-from collections.abc import Generator
-from contextlib import contextmanager
 from pathlib import Path
 
 import click
 
 from licmgr.exceptions import LicmgrException
 from licmgr.services.license.service import LicenseService
-from licmgr.storage import Db
 from licmgr.storage import DEFAULT_DB_PATH
 from licmgr.storage import LicenseRepo
-
-
-@contextmanager
-def open_database(path: Path) -> Generator[Db, None, None]:
-    database = Db.from_sqlite_path(path)
-    try:
-        database.initialize()
-        yield database
-    finally:
-        database.close()
+from licmgr.storage import open_database
 
 
 @click.group()

@@ -60,3 +60,13 @@ class Db:
             if immediate:
                 session.execute(text("BEGIN IMMEDIATE"))
             yield session
+
+
+@contextmanager
+def open_database(path: Path) -> Generator[Db, None, None]:
+    database = Db.from_sqlite_path(path)
+    try:
+        database.initialize()
+        yield database
+    finally:
+        database.close()
