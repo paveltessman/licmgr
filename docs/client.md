@@ -6,7 +6,7 @@ The client uses a license key issued by the server to request activation for the
 
 1. The client receives a license key issued by the server.
 2. The client derives a device identifier from the Linux kernel release, CPU architecture, logical CPU count, and MAC address.
-3. The client sends the license key and device identifier to the [activation API](activation.md).
+3. The client prints the four values and the resulting device identifier to stdout, then sends the license key and device identifier to the [activation API](activation.md).
 4. The server validates the request and applies the license's `max_devices` limit when activating a new device.
 5. The client displays the outcome for the request.
 
