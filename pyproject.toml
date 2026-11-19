@@ -1,16 +1,16 @@
 [project]
-name = "license"
+name = "licmgr"
 version = "0.0.0"
 description = "opa"
 
 [tool.pyright]
-include = ["license"]
+include = ["licmgr"]
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
 
 [tool.pytest.ini_options]
-testpaths = ["license"]
+testpaths = ["licmgr"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
