@@ -1,5 +1,7 @@
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Self
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
@@ -11,6 +13,8 @@ from sqlalchemy.orm import sessionmaker
 from .base import Base
 from .exceptions import DbError
 from .exceptions import DbIntegrityError
+
+DEFAULT_DB_PATH = "db.sqlite3"
 
 
 @contextmanager
@@ -27,6 +31,10 @@ class Db:
     def __init__(self, url: str | URL) -> None:
         self._engine = create_engine(url)
         self._sessions = sessionmaker(self._engine)
+
+    @classmethod
+    def from_sqlite_path(cls, path: Path) -> Self:
+        return cls(URL.create("sqlite", database=str(path.absolute())))
 
     def initialize(self) -> None:
         with _translate_database_errors():
