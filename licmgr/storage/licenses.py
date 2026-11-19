@@ -34,5 +34,5 @@ class LicenseRepo:
             .returning(License.id)
         )
 
-        with self._database.transaction() as session:
+        with self._database.transaction(immediate=False) as session:
             return session.scalar(statement) is not None

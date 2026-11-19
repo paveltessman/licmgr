@@ -1,9 +1,12 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from sqlite3 import Connection
 from typing import Self
 
 from sqlalchemy import create_engine
+from sqlalchemy import event
+from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import IntegrityError
@@ -15,6 +18,11 @@ from .exceptions import DbError
 from .exceptions import DbIntegrityError
 
 DEFAULT_DB_PATH = "db.sqlite3"
+
+
+def _enable_sqlite_foreign_keys(connection: Connection, _: object) -> None:
+    cursor = connection.execute("PRAGMA foreign_keys = ON")
+    cursor.close()
 
 
 @contextmanager
@@ -30,6 +38,8 @@ def _translate_database_errors() -> Generator[None, None, None]:
 class Db:
     def __init__(self, url: str | URL) -> None:
         self._engine = create_engine(url)
+        if self._engine.dialect.name == "sqlite":
+            event.listen(self._engine, "connect", _enable_sqlite_foreign_keys)
         self._sessions = sessionmaker(self._engine)
 
     @classmethod
@@ -45,6 +55,8 @@ class Db:
             self._engine.dispose()
 
     @contextmanager
-    def transaction(self) -> Generator[Session, None, None]:
+    def transaction(self, *, immediate: bool) -> Generator[Session, None, None]:
         with _translate_database_errors(), self._sessions.begin() as session:
+            if immediate:
+                session.execute(text("BEGIN IMMEDIATE"))
             yield session
