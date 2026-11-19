@@ -132,11 +132,18 @@ def test_activation(
         connection.close.assert_called_once_with()
 
     captured = capsys.readouterr()
+    details = (
+        "OS version (Linux kernel): 6.12.0\n"
+        "CPU architecture: x86_64\n"
+        "Logical CPU count: 8\n"
+        "MAC address: 02:00:00:00:00:01\n"
+        f"Device ID: {DEVICE_ID}\n"
+    )
     if exit_code:
         assert captured.err == f"Error: {message}\n"
-        assert captured.out == ""
+        assert captured.out == details
     else:
-        assert captured.out == f"{message}\n"
+        assert captured.out == f"{details}{message}\n"
         assert captured.err == ""
 
 

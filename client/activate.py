@@ -88,17 +88,28 @@ def get_mac_address() -> str:
     return selected
 
 
-def get_device_id() -> str:
+def get_device_id(*, print_details: bool = False) -> str:
     os_version = platform.release()
     architecture = platform.machine()
     core_count = os.cpu_count()
     if not os_version or not architecture or core_count is None or core_count < 1:
         raise ActivationError("could not determine Linux kernel release or CPU details")
 
+    mac_address = get_mac_address()
     fingerprint = json.dumps(
-        [os_version, architecture, core_count, get_mac_address()], separators=(",", ":")
+        [os_version, architecture, core_count, mac_address], separators=(",", ":")
     ).encode("utf-8")
-    return hmac.digest(b"licmgr/device-id/v2", fingerprint, "sha256").hex()
+    device_id = hmac.digest(b"licmgr/device-id/v2", fingerprint, "sha256").hex()
+    if print_details:
+        print(
+            f"OS version (Linux kernel): {os_version}\n"
+            f"CPU architecture: {architecture}\n"
+            f"Logical CPU count: {core_count}\n"
+            f"MAC address: {mac_address}\n"
+            f"Device ID: {device_id}",
+            flush=True,
+        )
+    return device_id
 
 
 def response_field(payload: object, name: str) -> object:
@@ -257,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
         message = activate(
             args.server_url,
             args.license_key,
-            get_device_id(),
+            get_device_id(print_details=True),
             load_server_public_key(),
         )
     except ActivationError as error:
