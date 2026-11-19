@@ -1,3 +1,4 @@
+import base64
 import re
 import sqlite3
 from contextlib import closing
@@ -5,8 +6,28 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
 from .cli import cli
+
+
+def test_generate_keypair_prints_matching_activation_keys() -> None:
+    result = CliRunner().invoke(cli, ["keypair"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    private_line, public_line = result.stdout.splitlines()
+    private_name, _, private_value = private_line.partition("=")
+    public_name, _, public_value = public_line.partition("=")
+    assert private_name == "LICMGR_SERVER_PRIVATE_KEY"
+    assert public_name == "LICMGR_SERVER_PUBLIC_KEY"
+
+    private_bytes = base64.b64decode(private_value, validate=True)
+    public_bytes = base64.b64decode(public_value, validate=True)
+    assert base64.b64encode(private_bytes).decode("ascii") == private_value
+    assert base64.b64encode(public_bytes).decode("ascii") == public_value
+    private_key = X25519PrivateKey.from_private_bytes(private_bytes)
+    assert private_key.public_key().public_bytes_raw() == public_bytes
 
 
 @pytest.mark.parametrize(

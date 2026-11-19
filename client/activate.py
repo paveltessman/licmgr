@@ -1,7 +1,8 @@
-#!/usr/bin/python3
 import argparse
+import base64
 import hmac
 import json
+import os
 import re
 import sys
 from http.client import HTTPConnection
@@ -11,9 +12,18 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
+from cryptography.hazmat.primitives.hpke import AEAD
+from cryptography.hazmat.primitives.hpke import KDF
+from cryptography.hazmat.primitives.hpke import KEM
+from cryptography.hazmat.primitives.hpke import Suite
+
 MACHINE_ID_PATH = Path("/etc/machine-id")
 ACTIVATION_PATH = "/api/v1/licenses/activate/"
 REQUEST_TIMEOUT = 10
+ACTIVATION_INFO = b"license-activation-v1"
+SERVER_PUBLIC_KEY_ENV = "LICMGR_SERVER_PUBLIC_KEY"
 
 SUCCESS_MESSAGES = {
     "activated": "Activated",
@@ -97,7 +107,50 @@ def server_connection(server_url: str) -> tuple[HTTPConnection, str]:
     return connection, url.path.rstrip("/") + ACTIVATION_PATH
 
 
-def activate(server_url: str, license_key: str, device_id: str) -> str:
+def load_server_public_key() -> X25519PublicKey:
+    value = os.environ.get(SERVER_PUBLIC_KEY_ENV)
+    if value is None:
+        raise ActivationError(f"Set {SERVER_PUBLIC_KEY_ENV} to the server public key")
+
+    try:
+        key = base64.b64decode(value, validate=True)
+        if base64.b64encode(key).decode("ascii") == value:
+            return X25519PublicKey.from_public_bytes(key)
+    except (ValueError, UnsupportedAlgorithm):
+        pass
+
+    raise ActivationError(
+        f"Invalid {SERVER_PUBLIC_KEY_ENV}: expected a 32-byte X25519 public key "
+        "in standard padded base64"
+    )
+
+
+def encrypt_request(
+    license_key: str,
+    device_id: str,
+    public_key: X25519PublicKey,
+) -> str:
+    plaintext = json.dumps({"license_key": license_key, "device_id": device_id}).encode(
+        "utf-8"
+    )
+    try:
+        suite = Suite(KEM.X25519, KDF.HKDF_SHA256, AEAD.AES_128_GCM)
+        ciphertext = suite.encrypt(plaintext, public_key, info=ACTIVATION_INFO)
+    except (ValueError, UnsupportedAlgorithm) as error:
+        raise ActivationError("Could not encrypt the activation request") from error
+
+    return json.dumps(
+        {"version": 1, "ciphertext": base64.b64encode(ciphertext).decode("ascii")}
+    )
+
+
+def activate(
+    server_url: str,
+    license_key: str,
+    device_id: str,
+    public_key: X25519PublicKey,
+) -> str:
+    envelope = encrypt_request(license_key, device_id, public_key)
     try:
         connection, path = server_connection(server_url)
 
@@ -105,7 +158,7 @@ def activate(server_url: str, license_key: str, device_id: str) -> str:
             connection.request(
                 "POST",
                 path,
-                body=json.dumps({"license_key": license_key, "device_id": device_id}),
+                body=envelope,
                 headers={"Content-Type": "application/json"},
             )
 
@@ -141,8 +194,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Activation server base URL",
     )
     args = parser.parse_args(argv)
+
     try:
-        message = activate(args.server_url, args.license_key, get_device_id())
+        message = activate(
+            args.server_url,
+            args.license_key,
+            get_device_id(),
+            load_server_public_key(),
+        )
     except ActivationError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

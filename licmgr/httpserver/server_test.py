@@ -7,24 +7,31 @@ import pytest
 from fastapi import Depends
 from httpx import ASGITransport
 from httpx import AsyncClient
+from pydantic import ValidationError
 
+from .dependencies import get_crypto_service
 from .dependencies import get_license_service
 from .schemas import SuccessResponse
 from .server import create_app
+from licmgr.services.crypto import CryptoService
 from licmgr.services.license.service import LicenseService
 from licmgr.storage import Db
 
 
-async def test_lifespan_provides_service(tmp_path: Path) -> None:
+@pytest.mark.usefixtures("server_private_key")
+async def test_lifespan_provides_services(tmp_path: Path) -> None:
     db_path = tmp_path / "licenses.sqlite3"
     app = create_app(db_path)
 
     @app.get("/test")
     def endpoint(
         service: Annotated[LicenseService, Depends(get_license_service)],
+        crypto: Annotated[CryptoService, Depends(get_crypto_service)],
     ) -> SuccessResponse[int]:
         assert service is app.state.license_service
         assert isinstance(service, LicenseService)
+        assert crypto is app.state.crypto_service
+        assert isinstance(crypto, CryptoService)
         return SuccessResponse(data=3)
 
     async with app.router.lifespan_context(app):
@@ -36,8 +43,10 @@ async def test_lifespan_provides_service(tmp_path: Path) -> None:
             assert response.json() == {"data": 3, "error": None}
 
     assert db_path.is_file()
+    assert not hasattr(app.state, "crypto_service")
 
 
+@pytest.mark.usefixtures("server_private_key")
 @pytest.mark.parametrize("startup_fails", [False, True])
 async def test_lifespan_closes_database(tmp_path: Path, startup_fails: bool) -> None:
     app = create_app(tmp_path / "licenses.sqlite3")
@@ -58,6 +67,26 @@ async def test_lifespan_closes_database(tmp_path: Path, startup_fails: bool) -> 
     assert not hasattr(app.state, "license_service")
 
 
+@pytest.mark.parametrize("key", [None, "invalid!"])
+async def test_lifespan_requires_valid_private_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str | None
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    if key is None:
+        monkeypatch.delenv("LICMGR_SERVER_PRIVATE_KEY", raising=False)
+    else:
+        monkeypatch.setenv("LICMGR_SERVER_PRIVATE_KEY", key)
+    db_path = tmp_path / "licenses.sqlite3"
+    app = create_app(db_path)
+
+    with pytest.raises(ValidationError, match="LICMGR_SERVER_PRIVATE_KEY"):
+        async with app.router.lifespan_context(app):
+            pytest.fail("App started without a valid private key")
+
+    assert not db_path.exists()
+
+
+@pytest.mark.usefixtures("server_private_key")
 async def test_framework_errors_use_shared_response(tmp_path: Path) -> None:
     app = create_app(tmp_path / "licenses.sqlite3")
 
