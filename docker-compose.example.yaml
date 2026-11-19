@@ -1,0 +1,12 @@
+services:
+  app:
+    image: ghcr.io/paveltessman/license:latest
+    environment:
+      LICMGR_SERVER_PRIVATE_KEY: "${LICMGR_SERVER_PRIVATE_KEY:?Set LICMGR_SERVER_PRIVATE_KEY in .env or export it}"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - license-data:/data
+
+volumes:
+  license-data:
