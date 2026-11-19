@@ -152,7 +152,7 @@ def test_unusable_machine_id(
     ("error", "detail"),
     [
         (ConnectionRefusedError("Connection refused"), "Connection refused"),
-        (TimeoutError(), "Activation request timed out (socket timeout: 10 seconds)"),
+        (TimeoutError(), "activation request timed out (socket timeout: 10 seconds)"),
     ],
 )
 def test_transport_failure(
@@ -176,12 +176,12 @@ def test_transport_failure(
 @pytest.mark.parametrize(
     ("value", "detail"),
     [
-        (None, "Set LICMGR_SERVER_PUBLIC_KEY"),
-        ("not-base64", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
-        ("YQ==", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
-        ("A" * 43, "Invalid LICMGR_SERVER_PUBLIC_KEY"),
-        ("A" * 42 + "B=", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
-        ("A" * 43 + "=", "Could not encrypt the activation request"),
+        (None, "set LICMGR_SERVER_PUBLIC_KEY"),
+        ("not-base64", "invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("YQ==", "invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 43, "invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 42 + "B=", "invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 43 + "=", "could not encrypt the activation request"),
     ],
 )
 def test_unusable_server_public_key(
@@ -205,6 +205,47 @@ def test_unusable_server_public_key(
 
 def test_malformed_response() -> None:
     with pytest.raises(
-        activate.ActivationError, match=r"Invalid activation response \(HTTP 200\): .+"
+        activate.ActivationError, match=r"invalid activation response \(HTTP 200\): .+"
     ):
         activate.response_message(200, b"{")
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["", "abcd-EFGH-IJKL-MNOP", "ABC-EFGH-IJKL-MNOP", "ABCD-EFGH-IJKL-MNOP\n"],
+)
+def test_invalid_license_key(key: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.object(activate, "get_device_id", autospec=True) as get_device_id:
+        assert activate.main([key]) == 1
+        get_device_id.assert_not_called()
+
+    assert "invalid license key format" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "message"),
+    [
+        (404, b"<html>Not Found</html>", "HTTP 404 Not Found"),
+        (404, b'{"detail":"Not Found"}', "HTTP 404 Not Found"),
+        (
+            404,
+            b'{"error":{"code":"not_found","message":"Not Found"}}',
+            "Activation endpoint not found",
+        ),
+        (503, b"", "Unexpected activation response"),
+        (200, b'{"data":[]}', "Unexpected activation response"),
+        (
+            200,
+            b'{"data":{"status":"activated"},"error":{"code":"unexpected"}}',
+            "Unexpected activation response",
+        ),
+        (
+            409,
+            b'{"error":{"code":"device_limit_reached","message":[]}}',
+            "Unexpected activation response",
+        ),
+    ],
+)
+def test_unexpected_response(status: int, body: bytes, message: str) -> None:
+    with pytest.raises(activate.ActivationError, match=message):
+        activate.response_message(status, body)
