@@ -1,0 +1,19 @@
+[project]
+name = "license"
+version = "0.0.0"
+description = "opa"
+
+[tool.pyright]
+include = ["license"]
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["license"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error"]
+
+[build-system]
+requires = ["flit_core<4"]
+build-backend = "flit_core.buildapi"
