@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 
 from .schemas import ApiError
 from .schemas import ErrorResponse
+from licmgr.services.crypto.exceptions import InvalidEncryptedPayloadError
 from licmgr.services.license.exceptions import DeviceLimitReachedError
 from licmgr.services.license.exceptions import InvalidActivationRequestError
 from licmgr.services.license.exceptions import InvalidLicenseError
@@ -66,7 +67,9 @@ async def handle_validation_error(request: Request, error: Exception) -> JSONRes
             f"{'.'.join(map(str, issue['loc']))}: {issue['msg']}" for issue in issues
         )
     else:
-        assert isinstance(error, InvalidActivationRequestError)
+        assert isinstance(
+            error, (InvalidActivationRequestError, InvalidEncryptedPayloadError)
+        )
         details = str(error)
 
     r = error_response(
@@ -104,6 +107,7 @@ async def handle_device_limit(request: Request, error: Exception) -> JSONRespons
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(HTTPException, handle_http_error)
     app.add_exception_handler(RequestValidationError, handle_validation_error)
+    app.add_exception_handler(InvalidEncryptedPayloadError, handle_validation_error)
     app.add_exception_handler(InvalidActivationRequestError, handle_validation_error)
     app.add_exception_handler(InvalidLicenseError, handle_invalid_license)
     app.add_exception_handler(DeviceLimitReachedError, handle_device_limit)
