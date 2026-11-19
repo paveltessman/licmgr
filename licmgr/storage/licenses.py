@@ -4,9 +4,9 @@ from uuid import uuid4
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Mapped
 from sqlalchemy.orm import mapped_column
-from sqlalchemy.orm import Session
 
 from .base import Base
+from .db import Db
 
 
 class License(Base):
@@ -18,8 +18,8 @@ class License(Base):
 
 
 class LicenseRepository:
-    def __init__(self, session: Session) -> None:
-        self._session = session
+    def __init__(self, database: Db) -> None:
+        self._database = database
 
     def add(self, key: str, max_devices: int) -> bool:
         """
@@ -34,4 +34,5 @@ class LicenseRepository:
             .returning(License.id)
         )
 
-        return self._session.scalar(statement) is not None
+        with self._database.transaction() as session:
+            return session.scalar(statement) is not None

@@ -27,14 +27,18 @@ def database(database_url: URL) -> Iterator[Db]:
         database.close()
 
 
+@pytest.fixture
+def repo(database: Db) -> LicenseRepository:
+    return LicenseRepository(database)
+
+
 def test_license_survives_reopening(database: Db, database_url: URL) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
 
+    added = LicenseRepository(database).add(key, max_devices=3)
+    assert added
+
     with database.transaction() as session:
-
-        added = LicenseRepository(session).add(key, max_devices=3)
-        assert added
-
         license = session.scalars(select(License).where(License.key == key)).one()
         license_id = license.id
 
@@ -60,12 +64,13 @@ def test_license_survives_reopening(database: Db, database_url: URL) -> None:
 def test_duplicate_key_preserves_existing_license(database: Db) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
 
-    with database.transaction() as session:
-        LicenseRepository(session).add(key, max_devices=3)
+    repository = LicenseRepository(database)
 
-    with database.transaction() as session:
-        added = LicenseRepository(session).add(key, max_devices=5)
-        assert not added
+    added = repository.add(key, max_devices=3)
+    assert added
+
+    added_again = repository.add(key, max_devices=5)
+    assert not added_again
 
     with database.transaction() as session:
         license = session.scalars(select(License).where(License.key == key)).one()
@@ -76,8 +81,8 @@ def test_transaction_rolls_back_inserted_license(database: Db) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
 
     with pytest.raises(RuntimeError, match="abort"), database.transaction() as session:
-        added = LicenseRepository(session).add(key, max_devices=3)
-        assert added
+        session.add(License(key=key, max_devices=3))
+        session.flush()
         raise RuntimeError("abort")
 
     with database.transaction() as session:
