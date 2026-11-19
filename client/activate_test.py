@@ -1,13 +1,30 @@
+import base64
 import json
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import activate
 import pytest
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives.hpke import AEAD
+from cryptography.hazmat.primitives.hpke import KDF
+from cryptography.hazmat.primitives.hpke import KEM
+from cryptography.hazmat.primitives.hpke import Suite
 
 LICENSE_KEY = "ABCD-EFGH-IJKL-MNOP"
 DEVICE_ID = "a1db8e5a778622c7d0ad22b7cd4de03cc7f89f01ce0b4377690c5cb64098408c"
 MACHINE_ID = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.fixture
+def server_private_key(monkeypatch: pytest.MonkeyPatch) -> X25519PrivateKey:
+    key = X25519PrivateKey.generate()
+    public_bytes = key.public_key().public_bytes_raw()
+    monkeypatch.setenv(
+        "LICMGR_SERVER_PUBLIC_KEY", base64.b64encode(public_bytes).decode("ascii")
+    )
+    return key
 
 
 @pytest.fixture
@@ -64,6 +81,7 @@ def machine_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 )
 def test_activation(
     machine_id: Path,
+    server_private_key: X25519PrivateKey,
     capsys: pytest.CaptureFixture[str],
     status: int,
     payload: dict[str, object],
@@ -79,15 +97,28 @@ def test_activation(
         assert activate.main([LICENSE_KEY]) == exit_code
 
         connect.assert_called_once_with("127.0.0.1", 8000, timeout=10)
+        request_body: object = connection.request.call_args.kwargs["body"]
+        assert isinstance(request_body, str)
+        envelope = cast(dict[str, object], json.loads(request_body))
+        assert isinstance(envelope, dict)
+        assert set(envelope) == {"version", "ciphertext"}
+        assert type(envelope["version"]) is int and envelope["version"] == 1
+        encoded = envelope["ciphertext"]
+        assert isinstance(encoded, str)
+        ciphertext = base64.b64decode(encoded, validate=True)
+        assert base64.b64encode(ciphertext).decode("ascii") == encoded
+        suite = Suite(KEM.X25519, KDF.HKDF_SHA256, AEAD.AES_128_GCM)
+        plaintext = suite.decrypt(
+            ciphertext, server_private_key, info=b"license-activation-v1"
+        )
+        assert json.loads(plaintext) == {
+            "license_key": LICENSE_KEY,
+            "device_id": DEVICE_ID,
+        }
         connection.request.assert_called_once_with(
             "POST",
             "/api/v1/licenses/activate/",
-            body=json.dumps(
-                {
-                    "license_key": LICENSE_KEY,
-                    "device_id": DEVICE_ID,
-                }
-            ),
+            body=request_body,
             headers={"Content-Type": "application/json"},
         )
         connection.close.assert_called_once_with()
@@ -125,7 +156,11 @@ def test_unusable_machine_id(
     ],
 )
 def test_transport_failure(
-    machine_id: Path, capsys: pytest.CaptureFixture[str], error: OSError, detail: str
+    machine_id: Path,
+    server_private_key: X25519PrivateKey,
+    capsys: pytest.CaptureFixture[str],
+    error: OSError,
+    detail: str,
 ) -> None:
     with patch.object(activate, "HTTPSConnection", autospec=True) as connect:
         connect.return_value.request.side_effect = error
@@ -134,6 +169,36 @@ def test_transport_failure(
 
         connect.assert_called_once_with("example.test", None, timeout=10)
         connect.return_value.close.assert_called_once_with()
+
+    assert detail in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("value", "detail"),
+    [
+        (None, "Set LICMGR_SERVER_PUBLIC_KEY"),
+        ("not-base64", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("YQ==", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 43, "Invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 42 + "B=", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 43 + "=", "Could not encrypt the activation request"),
+    ],
+)
+def test_unusable_server_public_key(
+    machine_id: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    value: str | None,
+    detail: str,
+) -> None:
+    if value is None:
+        monkeypatch.delenv("LICMGR_SERVER_PUBLIC_KEY", raising=False)
+    else:
+        monkeypatch.setenv("LICMGR_SERVER_PUBLIC_KEY", value)
+
+    with patch.object(activate, "HTTPConnection", autospec=True) as connect:
+        assert activate.main([LICENSE_KEY]) == 1
+        connect.assert_not_called()
 
     assert detail in capsys.readouterr().err
 
