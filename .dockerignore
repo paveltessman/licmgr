@@ -1,0 +1,9 @@
+**
+!requirements.txt
+!pyproject.toml
+!licmgr/
+!licmgr/**
+**/__pycache__
+**/*.pyc
+**/*_test.py
+**/conftest.py
