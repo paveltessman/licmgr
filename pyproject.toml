@@ -5,6 +5,7 @@ description = "opa"
 
 [tool.pyright]
 include = ["license"]
+typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
 
