@@ -13,8 +13,7 @@ from cryptography.hazmat.primitives.hpke import KEM
 from cryptography.hazmat.primitives.hpke import Suite
 
 LICENSE_KEY = "ABCD-EFGH-IJKL-MNOP"
-DEVICE_ID = "a1db8e5a778622c7d0ad22b7cd4de03cc7f89f01ce0b4377690c5cb64098408c"
-MACHINE_ID = "0123456789abcdef0123456789abcdef"
+DEVICE_ID = "5e8258ad339c5da15abd4122e24e734c1473c8efe736f541e0bd786a004ad48f"
 
 
 @pytest.fixture
@@ -28,11 +27,20 @@ def server_private_key(monkeypatch: pytest.MonkeyPatch) -> X25519PrivateKey:
 
 
 @pytest.fixture
-def machine_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "machine-id"
-    path.write_text(f" {MACHINE_ID}\n", encoding="ascii")
-    monkeypatch.setattr(activate, "MACHINE_ID_PATH", path)
-    return path
+def network_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(activate, "NETWORK_INTERFACES_PATH", tmp_path)
+    monkeypatch.setattr(activate.platform, "release", lambda: "6.12.0")
+    monkeypatch.setattr(activate.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(activate.os, "cpu_count", lambda: 8)
+    for name, value in (
+        ("eth0", "02:00:00:00:00:02"),
+        ("eth1", "02:00:00:00:00:01"),
+        ("lo", "00:00:00:00:00:01"),
+    ):
+        interface = tmp_path / name
+        interface.mkdir()
+        (interface / "address").write_text(f" {value}\n", encoding="ascii")
+    return tmp_path
 
 
 @pytest.mark.parametrize(
@@ -80,7 +88,7 @@ def machine_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ],
 )
 def test_activation(
-    machine_id: Path,
+    network_interfaces: Path,
     server_private_key: X25519PrivateKey,
     capsys: pytest.CaptureFixture[str],
     status: int,
@@ -132,20 +140,24 @@ def test_activation(
         assert captured.err == ""
 
 
-@pytest.mark.parametrize("value", [b"1234", b"0" * 32, b"A" * 32, b"\xff", None])
-def test_unusable_machine_id(
-    machine_id: Path, capsys: pytest.CaptureFixture[str], value: bytes | None
+@pytest.mark.parametrize(
+    "value", [b"1234", b"00:00:00:00:00:00", b"01:00:00:00:00:00", b"\xff", None]
+)
+def test_unusable_mac_address(
+    network_interfaces: Path, capsys: pytest.CaptureFixture[str], value: bytes | None
 ) -> None:
-    if value is None:
-        machine_id.unlink()
-    else:
-        machine_id.write_bytes(value)
+    for name in ("eth0", "eth1"):
+        address = network_interfaces / name / "address"
+        if value is None:
+            address.unlink()
+        else:
+            address.write_bytes(value)
 
     with patch.object(activate, "HTTPConnection", autospec=True) as connect:
         assert activate.main([LICENSE_KEY]) == 1
         connect.assert_not_called()
 
-    assert "Linux machine ID" in capsys.readouterr().err
+    assert "usable MAC address" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -156,7 +168,7 @@ def test_unusable_machine_id(
     ],
 )
 def test_transport_failure(
-    machine_id: Path,
+    network_interfaces: Path,
     server_private_key: X25519PrivateKey,
     capsys: pytest.CaptureFixture[str],
     error: OSError,
@@ -185,7 +197,7 @@ def test_transport_failure(
     ],
 )
 def test_unusable_server_public_key(
-    machine_id: Path,
+    network_interfaces: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     value: str | None,

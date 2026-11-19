@@ -3,6 +3,7 @@ import base64
 import hmac
 import json
 import os
+import platform
 import re
 import sys
 from http import HTTPStatus
@@ -20,7 +21,7 @@ from cryptography.hazmat.primitives.hpke import KDF
 from cryptography.hazmat.primitives.hpke import KEM
 from cryptography.hazmat.primitives.hpke import Suite
 
-MACHINE_ID_PATH = Path("/etc/machine-id")
+NETWORK_INTERFACES_PATH = Path("/sys/class/net")
 ACTIVATION_PATH = "/api/v1/licenses/activate/"
 REQUEST_TIMEOUT = 10
 ACTIVATION_INFO = b"license-activation-v1"
@@ -50,21 +51,54 @@ def validate_license_key(license_key: str) -> None:
         )
 
 
-def get_device_id() -> str:
+def read_mac_address(interface: Path) -> str | None:
+    if interface.name == "lo":
+        return None
+
     try:
-        machine_id = MACHINE_ID_PATH.read_text(encoding="ascii").strip()
-    except (OSError, UnicodeError) as error:
+        address = (interface / "address").read_text(encoding="ascii").strip().lower()
+    except (OSError, UnicodeError):
+        return None
+
+    if (
+        re.fullmatch(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}", address)
+        and address != "00:00:00:00:00:00"
+        and int(address[:2], 16) % 2 == 0
+    ):
+        return address
+
+    return None
+
+
+def get_mac_address() -> str:
+    try:
+        interfaces = list(NETWORK_INTERFACES_PATH.iterdir())
+    except OSError as error:
         raise ActivationError(
-            f"could not read the Linux machine ID: {error}"
+            f"could not list Linux network interfaces: {error}"
         ) from error
 
-    if not re.fullmatch(r"[0-9a-f]{32}", machine_id) or machine_id == "0" * 32:
-        raise ActivationError(
-            "invalid Linux machine ID: expected 32 lowercase hexadecimal digits, "
-            "with at least one nonzero digit"
-        )
-    h = hmac.digest(b"licmgr/device-id/v1", bytes.fromhex(machine_id), "sha256").hex()
-    return h
+    addresses = (read_mac_address(interface) for interface in interfaces)
+    selected = min(
+        (address for address in addresses if address is not None), default=None
+    )
+    if selected is None:
+        raise ActivationError("could not find a usable MAC address")
+
+    return selected
+
+
+def get_device_id() -> str:
+    os_version = platform.release()
+    architecture = platform.machine()
+    core_count = os.cpu_count()
+    if not os_version or not architecture or core_count is None or core_count < 1:
+        raise ActivationError("could not determine Linux kernel release or CPU details")
+
+    fingerprint = json.dumps(
+        [os_version, architecture, core_count, get_mac_address()], separators=(",", ":")
+    ).encode("utf-8")
+    return hmac.digest(b"licmgr/device-id/v2", fingerprint, "sha256").hex()
 
 
 def response_field(payload: object, name: str) -> object:
