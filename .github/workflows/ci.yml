@@ -15,6 +15,20 @@ jobs:
       fail-fast: false
       matrix:
         check: [pre-commit, tests, pyright]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: licmgr
+          POSTGRES_PASSWORD: licmgr
+          POSTGRES_DB: licmgr_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U licmgr -d licmgr_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,6 +44,8 @@ jobs:
         run: .venv/bin/pre-commit run --all-files --show-diff-on-failure
       - name: Run tests
         if: matrix.check == 'tests'
+        env:
+          LICMGR_TEST_DATABASE_URL: postgresql+psycopg://licmgr:licmgr@127.0.0.1:${{ job.services.postgres.ports[5432] }}/licmgr_test
         run: .venv/bin/python -m pytest
       - name: Run Pyright
         if: matrix.check == 'pyright'

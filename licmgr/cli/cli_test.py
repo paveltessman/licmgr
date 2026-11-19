@@ -1,14 +1,17 @@
 import base64
 import re
-import sqlite3
-from contextlib import closing
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from click.testing import CliRunner
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from sqlalchemy import select
+from sqlalchemy.engine import URL
 
 from .cli import cli
+from licmgr.storage import open_database
+from licmgr.storage.licenses import License
 
 
 def test_generate_keypair_prints_matching_activation_keys() -> None:
@@ -31,47 +34,55 @@ def test_generate_keypair_prints_matching_activation_keys() -> None:
 
 
 @pytest.mark.parametrize(
-    ("options", "filename", "max_devices"),
+    ("options", "max_devices"),
     [
-        ([], "db.sqlite3", 1),
-        (["--db", "demo.sqlite3", "--max-devices", "3"], "demo.sqlite3", 3),
+        ([], 1),
+        (["--max-devices", "3"], 3),
     ],
 )
 def test_create_persists_printed_key(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    options: list[str],
-    filename: str,
-    max_devices: int,
+    database_url: URL, options: list[str], max_devices: int
 ) -> None:
-    monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli, ["keys", "create", *options])
 
     assert result.exit_code == 0, result.output
     assert re.fullmatch(r"[A-Z0-9]{4}(?:-[A-Z0-9]{4}){3}\n", result.stdout)
     assert result.stderr == ""
 
-    with closing(sqlite3.connect(tmp_path / filename)) as connection:
-        rows = connection.execute("SELECT key, max_devices FROM licenses").fetchall()
-    assert rows == [(result.stdout.rstrip("\n"), max_devices)]
+    with open_database(database_url) as database, database.transaction() as session:
+        license = session.scalars(select(License)).one()
+        assert license.key == result.stdout.strip()
+        assert license.max_devices == max_devices
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "abc", str(2**63)])
-def test_create_rejects_invalid_device_limits(tmp_path: Path, value: str) -> None:
-    db_path = tmp_path / "licenses.sqlite3"
-    result = CliRunner().invoke(
-        cli, ["keys", "create", "--db", str(db_path), "--max-devices", value]
-    )
+@pytest.mark.parametrize("value", ["0", "-1", "abc"])
+def test_create_rejects_invalid_device_limits(value: str) -> None:
+    result = CliRunner().invoke(cli, ["keys", "create", "--max-devices", value])
 
     assert result.exit_code == 2
     assert result.stdout == ""
     assert "Invalid value for '--max-devices'" in result.stderr
-    assert not db_path.exists()
 
 
-def test_create_reports_database_failure(tmp_path: Path) -> None:
-    db_path = tmp_path / "missing" / "licenses.sqlite3"
-    result = CliRunner().invoke(cli, ["keys", "create", "--db", str(db_path)])
+def test_create_requires_database_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("LICMGR_DATABASE_URL", raising=False)
+
+    result = CliRunner().invoke(cli, ["keys", "create"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "Set LICMGR_DATABASE_URL" in result.stderr
+
+
+def test_create_reports_database_failure(
+    database_url: URL, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url = database_url.set(database=f"missing_{uuid4().hex}")
+    monkeypatch.setenv("LICMGR_DATABASE_URL", url.render_as_string(hide_password=False))
+    result = CliRunner().invoke(cli, ["keys", "create"])
 
     assert result.exit_code == 1
     assert result.stdout == ""

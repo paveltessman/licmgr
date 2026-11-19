@@ -4,8 +4,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from .settings import DatabaseSettings
 from .settings import Settings
 
+DB_ENV = "LICMGR_DATABASE_URL"
+DB_URL = "postgresql://licmgr:secret@localhost/licmgr"
 KEY_ENV = "LICMGR_SERVER_PRIVATE_KEY"
 KEY = bytes(range(32))
 ENCODED_KEY = base64.b64encode(KEY).decode("ascii")
@@ -15,6 +18,7 @@ ENCODED_KEY = base64.b64encode(KEY).decode("ascii")
 def isolated_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv(KEY_ENV, raising=False)
+    monkeypatch.setenv(DB_ENV, DB_URL)
 
 
 def test_loads_private_key_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,3 +60,23 @@ def test_rejects_invalid_private_key(
         Settings()
 
     assert value not in str(exc_info.value)
+
+
+def test_loads_and_masks_database_url() -> None:
+    settings = DatabaseSettings()
+
+    assert settings.LICMGR_DATABASE_URL.get_secret_value() == DB_URL.replace(
+        "postgresql:", "postgresql+psycopg:"
+    )
+    assert "secret" not in repr(settings)
+    assert settings.model_dump(mode="json")[DB_ENV] == "**********"
+
+
+def test_rejects_invalid_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    value = "invalid-credentials"
+    monkeypatch.setenv(DB_ENV, value)
+
+    with pytest.raises(ValidationError, match="Expected a PostgreSQL URL") as exc:
+        DatabaseSettings()
+
+    assert value not in str(exc.value)
