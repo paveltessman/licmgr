@@ -4,15 +4,12 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 from sqlalchemy.engine import URL
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.exc import OperationalError
 
 from . import Db
 from . import DbError
-from . import DbIntegrityError
 from . import LicenseRepository
 from .licenses import License
-from licmgr.exceptions import LicmgrException
 
 
 @pytest.fixture
@@ -32,48 +29,55 @@ def database(database_url: URL) -> Iterator[Db]:
 
 def test_license_survives_reopening(database: Db, database_url: URL) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
+
     with database.transaction() as session:
-        LicenseRepository(session).add(key, max_devices=3)
+
+        added = LicenseRepository(session).add(key, max_devices=3)
+        assert added
+
         license = session.scalars(select(License).where(License.key == key)).one()
         license_id = license.id
+
     database.close()
 
     reopened = Db(database_url)
+
     try:
         reopened.initialize()
+
         with reopened.transaction() as session:
+
             license = session.get(License, license_id)
+
             assert license is not None
             assert license.key == key
             assert license.max_devices == 3
+
     finally:
         reopened.close()
 
 
-def test_duplicate_key_not_raises_interity_error(database: Db) -> None:
+def test_duplicate_key_preserves_existing_license(database: Db) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
+
     with database.transaction() as session:
         LicenseRepository(session).add(key, max_devices=3)
 
-    with (
-        pytest.raises(DbIntegrityError) as exc,
-        database.transaction() as session,
-    ):
-        LicenseRepository(session).add(key, max_devices=5)
-
-    assert isinstance(exc.value, LicmgrException)
-    assert isinstance(exc.value.__cause__, IntegrityError)
+    with database.transaction() as session:
+        added = LicenseRepository(session).add(key, max_devices=5)
+        assert not added
 
     with database.transaction() as session:
         license = session.scalars(select(License).where(License.key == key)).one()
         assert license.max_devices == 3
 
 
-def test_transaction_rolls_back_flushed_license(database: Db) -> None:
+def test_transaction_rolls_back_inserted_license(database: Db) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
+
     with pytest.raises(RuntimeError, match="abort"), database.transaction() as session:
-        LicenseRepository(session).add(key, max_devices=3)
-        session.flush()
+        added = LicenseRepository(session).add(key, max_devices=3)
+        assert added
         raise RuntimeError("abort")
 
     with database.transaction() as session:
