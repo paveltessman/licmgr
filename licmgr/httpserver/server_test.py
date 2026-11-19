@@ -94,7 +94,10 @@ async def test_framework_errors_use_shared_response(tmp_path: Path) -> None:
                 "data": None,
                 "error": {
                     "code": "invalid_request",
-                    "message": "Request validation failed",
+                    "message": (
+                        "Request validation failed: query.count: Input should be a "
+                        "valid integer, unable to parse string as an integer"
+                    ),
                 },
             }
 

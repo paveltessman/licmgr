@@ -15,4 +15,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     with open_database(db_path) as database:
         app.state.license_service = LicenseService(LicenseRepo(database))
-        yield
+        try:
+            yield
+        finally:
+            del app.state.license_service
