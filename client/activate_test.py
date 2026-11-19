@@ -13,8 +13,7 @@ from cryptography.hazmat.primitives.hpke import KEM
 from cryptography.hazmat.primitives.hpke import Suite
 
 LICENSE_KEY = "ABCD-EFGH-IJKL-MNOP"
-DEVICE_ID = "a1db8e5a778622c7d0ad22b7cd4de03cc7f89f01ce0b4377690c5cb64098408c"
-MACHINE_ID = "0123456789abcdef0123456789abcdef"
+DEVICE_ID = "5e8258ad339c5da15abd4122e24e734c1473c8efe736f541e0bd786a004ad48f"
 
 
 @pytest.fixture
@@ -28,11 +27,20 @@ def server_private_key(monkeypatch: pytest.MonkeyPatch) -> X25519PrivateKey:
 
 
 @pytest.fixture
-def machine_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "machine-id"
-    path.write_text(f" {MACHINE_ID}\n", encoding="ascii")
-    monkeypatch.setattr(activate, "MACHINE_ID_PATH", path)
-    return path
+def network_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(activate, "NETWORK_INTERFACES_PATH", tmp_path)
+    monkeypatch.setattr(activate.platform, "release", lambda: "6.12.0")
+    monkeypatch.setattr(activate.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(activate.os, "cpu_count", lambda: 8)
+    for name, value in (
+        ("eth0", "02:00:00:00:00:02"),
+        ("eth1", "02:00:00:00:00:01"),
+        ("lo", "00:00:00:00:00:01"),
+    ):
+        interface = tmp_path / name
+        interface.mkdir()
+        (interface / "address").write_text(f" {value}\n", encoding="ascii")
+    return tmp_path
 
 
 @pytest.mark.parametrize(
@@ -80,7 +88,7 @@ def machine_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     ],
 )
 def test_activation(
-    machine_id: Path,
+    network_interfaces: Path,
     server_private_key: X25519PrivateKey,
     capsys: pytest.CaptureFixture[str],
     status: int,
@@ -124,39 +132,50 @@ def test_activation(
         connection.close.assert_called_once_with()
 
     captured = capsys.readouterr()
+    details = (
+        "OS version (Linux kernel): 6.12.0\n"
+        "CPU architecture: x86_64\n"
+        "Logical CPU count: 8\n"
+        "MAC address: 02:00:00:00:00:01\n"
+        f"Device ID: {DEVICE_ID}\n"
+    )
     if exit_code:
         assert captured.err == f"Error: {message}\n"
-        assert captured.out == ""
+        assert captured.out == details
     else:
-        assert captured.out == f"{message}\n"
+        assert captured.out == f"{details}{message}\n"
         assert captured.err == ""
 
 
-@pytest.mark.parametrize("value", [b"1234", b"0" * 32, b"A" * 32, b"\xff", None])
-def test_unusable_machine_id(
-    machine_id: Path, capsys: pytest.CaptureFixture[str], value: bytes | None
+@pytest.mark.parametrize(
+    "value", [b"1234", b"00:00:00:00:00:00", b"01:00:00:00:00:00", b"\xff", None]
+)
+def test_unusable_mac_address(
+    network_interfaces: Path, capsys: pytest.CaptureFixture[str], value: bytes | None
 ) -> None:
-    if value is None:
-        machine_id.unlink()
-    else:
-        machine_id.write_bytes(value)
+    for name in ("eth0", "eth1"):
+        address = network_interfaces / name / "address"
+        if value is None:
+            address.unlink()
+        else:
+            address.write_bytes(value)
 
     with patch.object(activate, "HTTPConnection", autospec=True) as connect:
         assert activate.main([LICENSE_KEY]) == 1
         connect.assert_not_called()
 
-    assert "Linux machine ID" in capsys.readouterr().err
+    assert "usable MAC address" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
     ("error", "detail"),
     [
         (ConnectionRefusedError("Connection refused"), "Connection refused"),
-        (TimeoutError(), "Activation request timed out (socket timeout: 10 seconds)"),
+        (TimeoutError(), "activation request timed out (socket timeout: 10 seconds)"),
     ],
 )
 def test_transport_failure(
-    machine_id: Path,
+    network_interfaces: Path,
     server_private_key: X25519PrivateKey,
     capsys: pytest.CaptureFixture[str],
     error: OSError,
@@ -176,16 +195,16 @@ def test_transport_failure(
 @pytest.mark.parametrize(
     ("value", "detail"),
     [
-        (None, "Set LICMGR_SERVER_PUBLIC_KEY"),
-        ("not-base64", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
-        ("YQ==", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
-        ("A" * 43, "Invalid LICMGR_SERVER_PUBLIC_KEY"),
-        ("A" * 42 + "B=", "Invalid LICMGR_SERVER_PUBLIC_KEY"),
-        ("A" * 43 + "=", "Could not encrypt the activation request"),
+        (None, "set LICMGR_SERVER_PUBLIC_KEY"),
+        ("not-base64", "invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("YQ==", "invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 43, "invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 42 + "B=", "invalid LICMGR_SERVER_PUBLIC_KEY"),
+        ("A" * 43 + "=", "could not encrypt the activation request"),
     ],
 )
 def test_unusable_server_public_key(
-    machine_id: Path,
+    network_interfaces: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     value: str | None,
@@ -205,6 +224,47 @@ def test_unusable_server_public_key(
 
 def test_malformed_response() -> None:
     with pytest.raises(
-        activate.ActivationError, match=r"Invalid activation response \(HTTP 200\): .+"
+        activate.ActivationError, match=r"invalid activation response \(HTTP 200\): .+"
     ):
         activate.response_message(200, b"{")
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["", "abcd-EFGH-IJKL-MNOP", "ABC-EFGH-IJKL-MNOP", "ABCD-EFGH-IJKL-MNOP\n"],
+)
+def test_invalid_license_key(key: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.object(activate, "get_device_id", autospec=True) as get_device_id:
+        assert activate.main([key]) == 1
+        get_device_id.assert_not_called()
+
+    assert "invalid license key format" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "message"),
+    [
+        (404, b"<html>Not Found</html>", "HTTP 404 Not Found"),
+        (404, b'{"detail":"Not Found"}', "HTTP 404 Not Found"),
+        (
+            404,
+            b'{"error":{"code":"not_found","message":"Not Found"}}',
+            "Activation endpoint not found",
+        ),
+        (503, b"", "Unexpected activation response"),
+        (200, b'{"data":[]}', "Unexpected activation response"),
+        (
+            200,
+            b'{"data":{"status":"activated"},"error":{"code":"unexpected"}}',
+            "Unexpected activation response",
+        ),
+        (
+            409,
+            b'{"error":{"code":"device_limit_reached","message":[]}}',
+            "Unexpected activation response",
+        ),
+    ],
+)
+def test_unexpected_response(status: int, body: bytes, message: str) -> None:
+    with pytest.raises(activate.ActivationError, match=message):
+        activate.response_message(status, body)

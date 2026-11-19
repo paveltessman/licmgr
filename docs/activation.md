@@ -5,7 +5,7 @@ Send `POST /activate` with `Content-Type: application/json`. The request body is
 | Field         | Value                                                                                                                                          |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `license_key` | A case-sensitive key issued by the server CLI in the form `XXXX-XXXX-XXXX-XXXX`. Send it as issued, including the hyphens.                     |
-| `device_id`   | The [identifier derived from the Linux machine ID](client.md#linux-device-identifier), encoded as exactly 64 lowercase hexadecimal characters. |
+| `device_id`   | The [Linux device identifier](client.md#linux-device-identifier), encoded as exactly 64 lowercase hexadecimal characters. |
 
 The server returns a JSON object containing `status`. For errors, it also returns a machine-readable `code`. Clients use the HTTP status and JSON fields to distinguish these responses.
 
