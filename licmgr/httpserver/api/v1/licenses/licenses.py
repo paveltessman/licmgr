@@ -30,7 +30,7 @@ class ActivationResult(BaseModel):
 
 
 @router.post("/activate/", responses={409: {"model": ErrorResponse}})
-def activate(
+async def activate(
     request: EncryptedRequest,
     service: Annotated[LicenseService, Depends(get_license_service)],
     crypto: Annotated[CryptoService, Depends(get_crypto_service)],
@@ -40,7 +40,7 @@ def activate(
         ActivationRequest,
         info=ACTIVATION_INFO,
     )
-    status = service.activate(
+    status = await service.activate(
         license_key=activation.license_key,
         device_id=activation.device_id,
     )

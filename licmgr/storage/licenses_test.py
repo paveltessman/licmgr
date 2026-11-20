@@ -1,8 +1,7 @@
-from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
+from collections.abc import AsyncIterator
 from datetime import datetime
 from datetime import UTC
-from threading import Barrier
 from uuid import UUID
 from uuid import uuid4
 
@@ -26,159 +25,171 @@ OTHER_DEVICE_ID = "b" * 64
 
 
 @pytest.fixture
-def database(database_url: URL) -> Iterator[Db]:
-    with open_database(database_url) as database:
+async def database(database_url: URL) -> AsyncIterator[Db]:
+    async with open_database(database_url) as database:
         yield database
 
 
 @pytest.fixture
-def repo(database: Db) -> LicenseRepo:
+async def repo(database: Db) -> LicenseRepo:
     repo = LicenseRepo(database)
-    assert repo.add(LICENSE_KEY, max_devices=1)
+    assert await repo.add(LICENSE_KEY, max_devices=1)
     return repo
 
 
-def test_license_survives_reopening(database: Db, database_url: URL) -> None:
+async def test_license_survives_reopening(database: Db, database_url: URL) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
 
-    added = LicenseRepo(database).add(key, max_devices=3)
+    added = await LicenseRepo(database).add(key, max_devices=3)
     assert added
 
-    with database.transaction() as session:
-        license = session.scalars(select(License).where(License.key == key)).one()
+    async with database.transaction() as session:
+        license = (
+            await session.scalars(select(License).where(License.key == key))
+        ).one()
         license_id = license.id
 
-    database.close()
+    await database.close()
 
     reopened = Db(database_url)
 
     try:
-        reopened.initialize()
+        await reopened.initialize()
 
-        with reopened.transaction() as session:
+        async with reopened.transaction() as session:
 
-            license = session.get(License, license_id)
+            license = await session.get(License, license_id)
 
             assert license is not None
             assert license.key == key
             assert license.max_devices == 3
 
     finally:
-        reopened.close()
+        await reopened.close()
 
 
-def test_duplicate_key_preserves_existing_license(database: Db) -> None:
+async def test_duplicate_key_preserves_existing_license(database: Db) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
 
     repository = LicenseRepo(database)
 
-    added = repository.add(key, max_devices=3)
+    added = await repository.add(key, max_devices=3)
     assert added
 
-    added_again = repository.add(key, max_devices=5)
+    added_again = await repository.add(key, max_devices=5)
     assert not added_again
 
-    with database.transaction() as session:
-        license = session.scalars(select(License).where(License.key == key)).one()
+    async with database.transaction() as session:
+        license = (
+            await session.scalars(select(License).where(License.key == key))
+        ).one()
         assert license.max_devices == 3
 
 
-def test_transaction_rolls_back_inserted_license(database: Db) -> None:
+async def test_transaction_rolls_back_inserted_license(database: Db) -> None:
     key = "AAAA-BBBB-CCCC-DDDD"
 
-    with pytest.raises(RuntimeError, match="abort"), database.transaction() as session:
-        session.add(License(key=key, max_devices=3))
-        session.flush()
-        raise RuntimeError("abort")
+    with pytest.raises(RuntimeError, match="abort"):
+        async with database.transaction() as session:
+            session.add(License(key=key, max_devices=3))
+            await session.flush()
+            raise RuntimeError("abort")
 
-    with database.transaction() as session:
-        assert session.scalar(select(License).where(License.key == key)) is None
+    async with database.transaction() as session:
+        assert await session.scalar(select(License).where(License.key == key)) is None
 
 
-def test_initialize_translates_database_connection_failure(database_url: URL) -> None:
+async def test_initialize_translates_database_connection_failure(
+    database_url: URL,
+) -> None:
     url = database_url.set(database=f"missing_{uuid4().hex}")
     database = Db(url)
     try:
         with pytest.raises(DbError) as exc:
-            database.initialize()
+            await database.initialize()
         assert isinstance(exc.value.__cause__, OperationalError)
     finally:
-        database.close()
+        await database.close()
 
 
-def test_activation_survives_reopening(
+async def test_activation_survives_reopening(
     database_url: URL,
 ) -> None:
     original = Db(database_url)
     try:
-        original.initialize()
-        assert LicenseRepo(original).add(LICENSE_KEY, max_devices=1)
+        await original.initialize()
+        assert await LicenseRepo(original).add(LICENSE_KEY, max_devices=1)
         started_at = datetime.now(UTC)
-        assert LicenseRepo(original).activate(LICENSE_KEY, DEVICE_ID) == (
+        assert await LicenseRepo(original).activate(LICENSE_KEY, DEVICE_ID) == (
             ActivationResult.ACTIVATED
         )
         finished_at = datetime.now(UTC)
-        with original.transaction() as session:
-            activation = session.scalars(select(Activation)).one()
+        async with original.transaction() as session:
+            activation = (await session.scalars(select(Activation))).one()
             activation_id = activation.id
             assert isinstance(activation_id, UUID)
             assert activation_id.version == 4
             created_at = activation.created_at
             assert started_at <= created_at <= finished_at
     finally:
-        original.close()
+        await original.close()
 
     reopened = Db(database_url)
     try:
-        reopened.initialize()
+        await reopened.initialize()
         repo = LicenseRepo(reopened)
 
-        result = repo.activate(LICENSE_KEY, DEVICE_ID)
+        result = await repo.activate(LICENSE_KEY, DEVICE_ID)
         assert result == ActivationResult.ALREADY_ACTIVATED
 
-        result = repo.activate(LICENSE_KEY, OTHER_DEVICE_ID)
+        result = await repo.activate(LICENSE_KEY, OTHER_DEVICE_ID)
         assert result == (ActivationResult.DEVICE_LIMIT_REACHED)
 
-        with reopened.transaction() as session:
-            activation = session.scalars(select(Activation)).one()
+        async with reopened.transaction() as session:
+            activation = (await session.scalars(select(Activation))).one()
             assert activation.id == activation_id
             assert activation.created_at == created_at
     finally:
-        reopened.close()
+        await reopened.close()
 
 
-def test_license_lookup_is_case_sensitive(repo: LicenseRepo) -> None:
-    assert repo.activate(LICENSE_KEY.lower(), DEVICE_ID) == (
+async def test_license_lookup_is_case_sensitive(repo: LicenseRepo) -> None:
+    assert await repo.activate(LICENSE_KEY.lower(), DEVICE_ID) == (
         ActivationResult.INVALID_LICENSE
     )
-    assert repo.activate(LICENSE_KEY, DEVICE_ID) == ActivationResult.ACTIVATED
+    assert await repo.activate(LICENSE_KEY, DEVICE_ID) == ActivationResult.ACTIVATED
 
 
-def test_capacity_and_device_registration_are_per_license(
+async def test_capacity_and_device_registration_are_per_license(
     repo: LicenseRepo,
 ) -> None:
     other_key = "EEEE-FFFF-GGGG-HHHH"
-    assert repo.add(other_key, max_devices=2)
+    assert await repo.add(other_key, max_devices=2)
 
-    assert repo.activate(LICENSE_KEY, DEVICE_ID) == ActivationResult.ACTIVATED
-    assert repo.activate(other_key, DEVICE_ID) == ActivationResult.ACTIVATED
-    assert repo.activate(other_key, OTHER_DEVICE_ID) == ActivationResult.ACTIVATED
-    assert repo.activate(other_key, "c" * 64) == ActivationResult.DEVICE_LIMIT_REACHED
-
-
-def test_activation_requires_an_existing_license(database: Db) -> None:
-    with pytest.raises(DbIntegrityError), database.transaction() as session:
-        session.add(Activation(license_id=uuid4(), device_id=DEVICE_ID))
+    assert await repo.activate(LICENSE_KEY, DEVICE_ID) == ActivationResult.ACTIVATED
+    assert await repo.activate(other_key, DEVICE_ID) == ActivationResult.ACTIVATED
+    assert await repo.activate(other_key, OTHER_DEVICE_ID) == ActivationResult.ACTIVATED
+    assert (
+        await repo.activate(other_key, "c" * 64)
+        == ActivationResult.DEVICE_LIMIT_REACHED
+    )
 
 
-def test_distinct_activation_ids_cannot_register_the_same_device(
+async def test_activation_requires_an_existing_license(database: Db) -> None:
+    with pytest.raises(DbIntegrityError):
+        async with database.transaction() as session:
+            session.add(Activation(license_id=uuid4(), device_id=DEVICE_ID))
+
+
+async def test_distinct_activation_ids_cannot_register_the_same_device(
     database: Db, repo: LicenseRepo
 ) -> None:
-    assert repo.activate(LICENSE_KEY, DEVICE_ID) == (ActivationResult.ACTIVATED)
+    assert await repo.activate(LICENSE_KEY, DEVICE_ID) == (ActivationResult.ACTIVATED)
 
-    with pytest.raises(DbIntegrityError), database.transaction() as session:
-        license_id = session.scalars(select(License.id)).one()
-        session.add(Activation(license_id=license_id, device_id=DEVICE_ID))
+    with pytest.raises(DbIntegrityError):
+        async with database.transaction() as session:
+            license_id = (await session.scalars(select(License.id))).one()
+            session.add(Activation(license_id=license_id, device_id=DEVICE_ID))
 
 
 @pytest.mark.parametrize(
@@ -188,19 +199,13 @@ def test_distinct_activation_ids_cannot_register_the_same_device(
         (OTHER_DEVICE_ID, ActivationResult.DEVICE_LIMIT_REACHED),
     ],
 )
-def test_concurrent_activations_share_one_slot(
+async def test_concurrent_activations_share_one_slot(
     repo: LicenseRepo, second_device_id: str, second_result: ActivationResult
 ) -> None:
-    barrier = Barrier(2)
+    async with asyncio.timeout(5):
+        results = await asyncio.gather(
+            repo.activate(LICENSE_KEY, DEVICE_ID),
+            repo.activate(LICENSE_KEY, second_device_id),
+        )
 
-    def activate(device_id: str) -> ActivationResult:
-        barrier.wait(timeout=5)
-        return repo.activate(LICENSE_KEY, device_id)
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        first = executor.submit(activate, DEVICE_ID)
-        second = executor.submit(activate, second_device_id)
-        assert {first.result(), second.result()} == {
-            ActivationResult.ACTIVATED,
-            second_result,
-        }
+    assert set(results) == {ActivationResult.ACTIVATED, second_result}

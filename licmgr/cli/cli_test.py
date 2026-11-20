@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import re
 from pathlib import Path
@@ -49,10 +50,14 @@ def test_create_persists_printed_key(
     assert re.fullmatch(r"[A-Z0-9]{4}(?:-[A-Z0-9]{4}){3}\n", result.stdout)
     assert result.stderr == ""
 
-    with open_database(database_url) as database, database.transaction() as session:
-        license = session.scalars(select(License)).one()
-        assert license.key == result.stdout.strip()
-        assert license.max_devices == max_devices
+    async def read_license() -> tuple[str, int]:
+        async with open_database(
+            database_url
+        ) as database, database.transaction() as session:
+            license = (await session.scalars(select(License))).one()
+            return license.key, license.max_devices
+
+    assert asyncio.run(read_license()) == (result.stdout.strip(), max_devices)
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "abc"])
