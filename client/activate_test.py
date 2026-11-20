@@ -210,6 +210,7 @@ def test_unusable_server_public_key(
     value: str | None,
     detail: str,
 ) -> None:
+    monkeypatch.chdir(network_interfaces)
     if value is None:
         monkeypatch.delenv("LICMGR_SERVER_PUBLIC_KEY", raising=False)
     else:
@@ -220,6 +221,27 @@ def test_unusable_server_public_key(
         connect.assert_not_called()
 
     assert detail in capsys.readouterr().err
+
+
+def test_server_public_key_from_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(activate.SERVER_PUBLIC_KEY_ENV, raising=False)
+    file_key = X25519PrivateKey.generate().public_key().public_bytes_raw()
+    env_key = X25519PrivateKey.generate().public_key().public_bytes_raw()
+    file_value = base64.b64encode(file_key).decode("ascii")
+    (tmp_path / ".env").write_text(
+        f"{activate.SERVER_PUBLIC_KEY_ENV}={file_value}\n",
+        encoding="utf-8",
+    )
+
+    assert activate.load_server_public_key().public_bytes_raw() == file_key
+
+    monkeypatch.setenv(
+        activate.SERVER_PUBLIC_KEY_ENV, base64.b64encode(env_key).decode("ascii")
+    )
+    assert activate.load_server_public_key().public_bytes_raw() == env_key
 
 
 def test_malformed_response() -> None:
