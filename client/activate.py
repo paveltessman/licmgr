@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.hpke import AEAD
 from cryptography.hazmat.primitives.hpke import KDF
 from cryptography.hazmat.primitives.hpke import KEM
 from cryptography.hazmat.primitives.hpke import Suite
+from dotenv import dotenv_values
 
 NETWORK_INTERFACES_PATH = Path("/sys/class/net")
 ACTIVATION_PATH = "/api/v1/licenses/activate/"
@@ -174,10 +175,21 @@ def server_connection(server_url: str) -> tuple[HTTPConnection, str]:
     return connection, url.path.rstrip("/") + ACTIVATION_PATH
 
 
-def load_server_public_key() -> X25519PublicKey:
+def read_server_public_key_setting() -> str | None:
     value = os.environ.get(SERVER_PUBLIC_KEY_ENV)
+    if value is not None:
+        return value
+
+    try:
+        return dotenv_values(".env", interpolate=False).get(SERVER_PUBLIC_KEY_ENV)
+    except (OSError, UnicodeError) as error:
+        raise ActivationError(f"could not read .env: {error}") from error
+
+
+def load_server_public_key() -> X25519PublicKey:
+    value = read_server_public_key_setting()
     if value is None:
-        raise ActivationError(f"set {SERVER_PUBLIC_KEY_ENV} to the server public key")
+        raise ActivationError(f"set {SERVER_PUBLIC_KEY_ENV} in the environment or .env")
 
     try:
         key = base64.b64decode(value, validate=True)
