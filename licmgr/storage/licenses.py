@@ -47,7 +47,7 @@ class LicenseRepo:
     def __init__(self, database: Db) -> None:
         self._database = database
 
-    def add(self, key: str, max_devices: int) -> bool:
+    async def add(self, key: str, max_devices: int) -> bool:
         """
         Insert a license and return `True`.
         If the key is already taken, do nothing and return `False`.
@@ -60,18 +60,18 @@ class LicenseRepo:
             .returning(License.id)
         )
 
-        with self._database.transaction() as session:
-            return session.scalar(statement) is not None
+        async with self._database.transaction() as session:
+            return await session.scalar(statement) is not None
 
-    def activate(self, license_key: str, device_id: str) -> ActivationResult:
-        with self._database.transaction() as session:
-            license = session.scalar(
+    async def activate(self, license_key: str, device_id: str) -> ActivationResult:
+        async with self._database.transaction() as session:
+            license = await session.scalar(
                 select(License).where(License.key == license_key).with_for_update()
             )
             if license is None:
                 return ActivationResult.INVALID_LICENSE
 
-            activation_id = session.scalar(
+            activation_id = await session.scalar(
                 select(Activation.id).where(
                     Activation.license_id == license.id,
                     Activation.device_id == device_id,
@@ -80,11 +80,12 @@ class LicenseRepo:
             if activation_id is not None:
                 return ActivationResult.ALREADY_ACTIVATED
 
-            count = session.execute(
+            count_result = await session.execute(
                 select(func.count())
                 .select_from(Activation)
                 .where(Activation.license_id == license.id)
-            ).scalar_one()
+            )
+            count = count_result.scalar_one()
 
             if count >= license.max_devices:
                 return ActivationResult.DEVICE_LIMIT_REACHED

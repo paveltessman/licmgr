@@ -1,13 +1,15 @@
+from collections.abc import AsyncGenerator
 from collections.abc import Generator
+from contextlib import asynccontextmanager
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from .base import Base
 from .exceptions import DbError
@@ -15,7 +17,7 @@ from .exceptions import DbIntegrityError
 
 
 @contextmanager
-def _translate_database_errors() -> Generator[None, None, None]:
+def _translate_database_errors() -> Generator[None]:
     try:
         yield
     except IntegrityError as error:
@@ -26,30 +28,34 @@ def _translate_database_errors() -> Generator[None, None, None]:
 
 class Db:
     def __init__(self, url: str | URL) -> None:
-        self._engine = create_engine(url, isolation_level="READ COMMITTED")
-        self._sessions = sessionmaker(self._engine)
+        self._engine = create_async_engine(url, isolation_level="READ COMMITTED")
+        self._sessions = async_sessionmaker(self._engine)
 
-    def initialize(self) -> None:
-        with _translate_database_errors(), self._engine.begin() as connection:
-            # Serialize the schema check and creation across CLI and server processes.
-            connection.execute(text("SELECT pg_advisory_xact_lock(1818846061)"))
-            Base.metadata.create_all(connection)
-
-    def close(self) -> None:
+    async def initialize(self) -> None:
         with _translate_database_errors():
-            self._engine.dispose()
+            async with self._engine.begin() as connection:
+                # Serialize schema initialization across CLI and server processes.
+                await connection.execute(
+                    text("SELECT pg_advisory_xact_lock(1818846061)")
+                )
+                await connection.run_sync(Base.metadata.create_all)
 
-    @contextmanager
-    def transaction(self) -> Generator[Session, None, None]:
-        with _translate_database_errors(), self._sessions.begin() as session:
-            yield session
+    async def close(self) -> None:
+        with _translate_database_errors():
+            await self._engine.dispose()
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncGenerator[AsyncSession]:
+        with _translate_database_errors():
+            async with self._sessions.begin() as session:
+                yield session
 
 
-@contextmanager
-def open_database(url: str | URL) -> Generator[Db, None, None]:
+@asynccontextmanager
+async def open_database(url: str | URL) -> AsyncGenerator[Db]:
     database = Db(url)
     try:
-        database.initialize()
+        await database.initialize()
         yield database
     finally:
-        database.close()
+        await database.close()

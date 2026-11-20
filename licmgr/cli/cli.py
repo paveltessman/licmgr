@@ -1,3 +1,4 @@
+import asyncio
 import base64
 
 import click
@@ -59,9 +60,15 @@ def create_key(max_devices: int) -> None:
         ) from error
 
     try:
-        with open_database(settings.LICMGR_DATABASE_URL.get_secret_value()) as database:
-            key = LicenseService(LicenseRepo(database)).create_license(max_devices)
+        key = asyncio.run(
+            _issue_key(settings.LICMGR_DATABASE_URL.get_secret_value(), max_devices)
+        )
     except LicmgrException as error:
         raise click.ClickException(str(error)) from error
 
     click.echo(key)
+
+
+async def _issue_key(database_url: str, max_devices: int) -> str:
+    async with open_database(database_url) as database:
+        return await LicenseService(LicenseRepo(database)).create_license(max_devices)

@@ -19,7 +19,7 @@ class LicenseService:
     def __init__(self, repo: LicenseRepo) -> None:
         self._repo = repo
 
-    def create_license(self, max_devices: int) -> str:
+    async def create_license(self, max_devices: int) -> str:
         """Persist a new license and return its key."""
 
         if max_devices < 1:
@@ -27,14 +27,14 @@ class LicenseService:
 
         for _ in range(_MAX_KEY_ATTEMPTS):
             key = self._generate_key()
-            added = self._repo.add(key, max_devices=max_devices)
+            added = await self._repo.add(key, max_devices=max_devices)
 
             if added:
                 return key
 
         raise LicenseCreationError("Could not allocate a unique license key")
 
-    def activate(
+    async def activate(
         self,
         *,
         license_key: str,
@@ -43,7 +43,7 @@ class LicenseService:
 
         self._validate_activation_params(key=license_key, device_id=device_id)
 
-        result = self._repo.activate(license_key, device_id)
+        result = await self._repo.activate(license_key, device_id)
 
         match result:
             case ActivationResult.ACTIVATED:

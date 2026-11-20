@@ -23,7 +23,7 @@ async def test_lifespan_provides_services() -> None:
     app = create_app()
 
     @app.get("/test")
-    def endpoint(
+    async def endpoint(
         service: Annotated[LicenseService, Depends(get_license_service)],
         crypto: Annotated[CryptoService, Depends(get_crypto_service)],
     ) -> SuccessResponse[int]:
@@ -63,8 +63,8 @@ async def test_lifespan_closes_database(
             async with app.router.lifespan_context(app):
                 database.close.assert_not_called()
 
-    database.initialize.assert_called_once_with()
-    database.close.assert_called_once_with()
+    database.initialize.assert_awaited_once_with()
+    database.close.assert_awaited_once_with()
     assert not hasattr(app.state, "license_service")
 
 
@@ -89,7 +89,7 @@ async def test_framework_errors_use_shared_response() -> None:
     app = create_app()
 
     @app.get("/test")
-    def endpoint(count: int) -> None:
+    async def endpoint(count: int) -> None:
         raise RuntimeError("private error")
 
     async with app.router.lifespan_context(app):

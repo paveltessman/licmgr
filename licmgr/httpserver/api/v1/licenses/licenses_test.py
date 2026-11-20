@@ -42,20 +42,24 @@ def encrypt(server_private_key: X25519PrivateKey) -> Encrypt:
 
 
 @pytest.fixture
-async def activation_client(
-    database_url: URL,
-    server_private_key: X25519PrivateKey,
-) -> AsyncGenerator[tuple[AsyncClient, str]]:
+def issued_key(database_url: URL) -> str:
     result = CliRunner().invoke(cli, ["keys", "create"])
     assert result.exit_code == 0, result.output
-    key = result.stdout.strip()
+    return result.stdout.strip()
 
+
+@pytest.fixture
+async def activation_client(
+    issued_key: str,
+    server_private_key: X25519PrivateKey,
+) -> AsyncGenerator[tuple[AsyncClient, str]]:
     app = create_app()
     async with app.router.lifespan_context(app):
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
+            transport=ASGITransport(app=app),
+            base_url="http://test",
         ) as client:
-            yield client, key
+            yield client, issued_key
 
 
 async def test_activate_at_device_limit(
