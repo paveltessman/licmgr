@@ -13,8 +13,8 @@
 1. Клонируйте репозиторий.
 
 ```bash
-git clone git@github.com:paveltessman/license.git
-cd license
+git clone git@github.com:paveltessman/licmgr.git
+cd licmgr
 ```
 
 2. Создайте виртуальное окружение, установите зависимости.
